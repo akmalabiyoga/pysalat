@@ -18,24 +18,14 @@ def fetch_one(query, params=()):
         cursor.execute(query, params)
         return cursor.fetchone()
 
-def init_db():
-    execute_query('''
-        CREATE TABLE IF NOT EXISTS cookies (
-            name TEXT PRIMARY KEY,
-            value TEXT
-        )
-    ''')
-    execute_query('''
-        CREATE TABLE IF NOT EXISTS provinces (
-            value TEXT PRIMARY KEY,
-            name TEXT,
-            name_slug TEXT
-        )
-    ''')
-        
 def close_db():
     sqlite3.connect("data/salat.db").close()
 
-def remove_db():
-    execute_query('DELETE FROM cookies')
-    execute_query('DELETE FROM provinces')
+def drop_db(tables: list[str]):
+    for table in tables:
+        execute_query(f'DROP TABLE IF EXISTS {table}')
+
+def init_db(schemas: dict[str, str]):
+    for table, schema in schemas.items():
+        drop_db([table])
+        execute_query(f'CREATE TABLE IF NOT EXISTS {table} ({schema})')

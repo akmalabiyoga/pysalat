@@ -1,3 +1,11 @@
 ### Initialize and fetch cookies and provinces
 GET http://localhost:8000/init
 Accept: application/json
+
+### Get kabupaten/kota of a province
+GET http://localhost:8000/kabupaten-kota/JAWA%20BARAT
+Accept: application/json
+
+### GET Jadwal Sholat
+GET http://localhost:8000/jadwal-sholat?province=JAWA%20BARAT&kabkota=BOGOR&bulan=5&tahun=2026
+Accept: application/json

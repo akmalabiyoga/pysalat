@@ -2,7 +2,6 @@ from charset_normalizer import constant
 import requests
 import json
 import os
-import sqlite3
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException
 from db import execute_query, fetch_query, init_db, fetch_one
@@ -17,8 +16,13 @@ def get_cookies():
     }
     
     os.makedirs("data", exist_ok=True)
+
+    schemas = {
+        'cookies': 'name TEXT PRIMARY KEY, value TEXT',
+        'provinces': 'value TEXT PRIMARY KEY, name TEXT, name_slug TEXT'
+    }
     
-    init_db()
+    init_db(schemas)
     
     try:
         # Create a session to persist cookies
@@ -62,8 +66,8 @@ def get_cookies():
             
             # Save provinces to SQLite
             for prov in provinces:
-                # remove spaces, dots, and comma in name_slug
-                name_slug = prov["text"].replace(" ", "").replace(".", "").replace(",", "") 
+                # remove spaces, dots, and comma in name_slug, and lowercase all
+                name_slug = prov["text"].replace(" ", "").replace(".", "").replace(",", "").lower() 
                 execute_query('INSERT OR REPLACE INTO provinces (value, name, name_slug) VALUES (?, ?, ?)', (prov["value"], prov["text"], name_slug))
         else:
             print("Select element with id 'search_prov' not found.")
@@ -87,31 +91,113 @@ def get_kabupaten_kota(province: str):
     }
     
     # convert province string to mapped value, use LIKE instead of =
-    prov_val = fetch_one('SELECT value FROM provinces WHERE UPPER(name) LIKE ?', ('%' + province.upper() + '%',))
-    if not prov_val:
+    prov_slug = province.replace(" ", "").replace(".", "").replace(",", "").lower() 
+    prov_data = fetch_one('SELECT value,name FROM provinces WHERE name_slug LIKE ?', ('%' + prov_slug + '%',))
+    if not prov_data:
         raise HTTPException(status_code=404, detail=f"Province {province} not found")
-    prov_val = prov_val[0]
+    prov_val = prov_data[0]
+    prov_name = prov_data[1]
 
-    print(f"Province {province} mapped to {prov_val}")
+    print(f"Province {province} mapped to {prov_name} with value {prov_val}")
     # get cookies from db
     cookies_list = fetch_query('SELECT name, value FROM cookies')
     cookies = {cookie[0]: cookie[1] for cookie in cookies_list}
     print(f"Using Cookies: {json.dumps(cookies, indent=4)}")
     
-    response = requests.post(api_url, headers=headers, data={'prov': prov_val}, cookies=cookies)
+    # use form-data for POST where prov valueis inside form-data "x"
+    headers['Content-Type'] = 'application/x-www-form-urlencoded'
+    data = {'x': prov_val}
+    response = requests.post(api_url, headers=headers, data=data, cookies=cookies)
     if response.status_code != 200:
         raise HTTPException(status_code=response.status_code, detail=f"Error accessing the website: {response.status_code}")
 
+    # it returns html options element value attribute are the id
+    # and text is the name
+    # parse it and save to json file with value and name
+    soup = BeautifulSoup(response.text, 'html.parser')
+    options = soup.find_all('option')
+    kabupaten_kota = []
+    for option in options:
+        value = option.get('value')
+        text = option.text.strip()
+        if value:
+            kabupaten_kota.append({'value': value, 'name': text})
+
+    # save to db
+    schemas = {
+        'kabupaten_kota': 'value TEXT PRIMARY KEY, name TEXT, name_slug TEXT, prov_val TEXT, prov_name TEXT'
+    }
+    init_db(schemas)
+    for city in kabupaten_kota:
+        name_slug = city['name'].replace(" ", "").replace(".", "").replace(",", "").lower()
+        execute_query('INSERT OR REPLACE INTO kabupaten_kota (value, name, name_slug, prov_val, prov_name) VALUES (?, ?, ?, ?, ?)', (city['value'], city['name'], name_slug, prov_val, prov_name))
+    
     # print response and save data to json file
-    print(f"Response: {json.dumps(response.text, indent=4)}") 
+    print(f"Response: {json.dumps(kabupaten_kota, indent=4)}") 
     os.makedirs("data/kabupaten-kota", exist_ok=True)
-    with open(f"data/kabupaten-kota/{prov_val}.json", "w") as f:
-        f.write(response.text)
+    with open(f"data/kabupaten-kota/{prov_name}.json", "w") as f:
+        f.write(json.dumps(kabupaten_kota, indent=4))
     
-    print(f"Saved {prov_val} to data/kabupaten-kota/{prov_val}.json")
-    return response.text
+    print(f"Saved {prov_name} kabupaten kota to data/kabupaten-kota/{prov_name}.json")
+    return kabupaten_kota
+
+@app.get("/kabupaten-kota/{province}")
+def get_kabupaten_kota_path(province: str):
+    return get_kabupaten_kota(province)
+
+@app.get("/jadwal-sholat")
+def get_jadwal_sholat(province: str, kabkota: str, bulan: str, tahun: str):
+    api_url = 'https://bimasislam.kemenag.go.id/ajax/getShalatbln'
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    }
     
+    prov_slug = province.replace(" ", "").replace(".", "").replace(",", "").lower() 
+    prov_data = fetch_one('SELECT value,name FROM provinces WHERE name_slug LIKE ?', ('%' + prov_slug + '%',))
+    if not prov_data:
+        raise HTTPException(status_code=404, detail=f"Province {province} not found")
+    prov_val = prov_data[0]
+    prov_name = prov_data[1]
+    
+    # Try to find the kabkota with a case-insensitive name_slug match
+    kab_slug = kabkota.replace(" ", "").replace(".", "").replace(",", "").lower()
+    kab_data = fetch_one('SELECT value,name FROM kabupaten_kota WHERE name_slug LIKE ? AND prov_val = ?', ('%' + kab_slug + '%', prov_val))
+    if not kab_data:
+        raise HTTPException(status_code=404, detail=f"Kabupaten/Kota {kabkota} not found in province {prov_name}")
+    kab_val = kab_data[0]
+    kab_name = kab_data[1]
+    
+    print(f"Jadwal Sholat mapped to Province: {prov_name} ({prov_val}), Kab/Kota: {kab_name} ({kab_val})")
+    
+    cookies_list = fetch_query('SELECT name, value FROM cookies')
+    cookies = {cookie[0]: cookie[1] for cookie in cookies_list}
+    
+    headers['Content-Type'] = 'application/x-www-form-urlencoded'
+    data = {
+        'x': prov_val,
+        'y': kab_val,
+        'bln': bulan,
+        'thn': tahun
+    }
+    
+    response = requests.post(api_url, headers=headers, data=data, cookies=cookies)
+    if response.status_code != 200:
+        raise HTTPException(status_code=response.status_code, detail=f"Error accessing the website: {response.status_code}")
+        
+    try:
+        jadwal_data = response.json()
+        
+        # Save the result to a JSON file for debugging or caching
+        os.makedirs("data/jadwal-sholat", exist_ok=True)
+        file_path = f"data/jadwal-sholat/{prov_name}_{kab_name}_{tahun}_{bulan}.json"
+        with open(file_path, "w") as f:
+            json.dump(jadwal_data, f, indent=4)
+        print(f"Saved jadwal sholat to {file_path}")
+            
+        return jadwal_data
+    except ValueError:
+        raise HTTPException(status_code=500, detail="Invalid JSON response from server")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
