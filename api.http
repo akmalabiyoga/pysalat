@@ -3,9 +3,19 @@ GET http://localhost:8000/init
 Accept: application/json
 
 ### Get kabupaten/kota of a province
-GET http://localhost:8000/kabupaten-kota/JAWA%20BARAT
+GET http://localhost:8000/kabupaten-kota/sulawesiselatan
 Accept: application/json
 
 ### GET Jadwal Sholat
-GET http://localhost:8000/jadwal-sholat?province=JAWA%20BARAT&kabkota=BOGOR&bulan=5&tahun=2026
+GET http://localhost:8000/jadwal-sholat?province=sulawesiselatan&kabkota=makassar&bulan=5&tahun=2026
+Accept: application/json
+
+
+### FROM API
+### GET JADWAL SHOLAT (ONE DAY)
+GET http://localhost:8000/api/v1/jadwal?kabkota=kabbogor&date=2026-05-15
+Accept: application/json
+
+### GET JADWAL SHOLAT (RANGE)
+GET http://localhost:8000/api/v1/jadwal?kabkota=kabbogor&start_date=2026-05-15&end_date=2026-05-16
 Accept: application/json

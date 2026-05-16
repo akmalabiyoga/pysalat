@@ -10,6 +10,7 @@ from config import DATA_DIR
 from db import fetch_one
 from scraper import fetch_jadwal_sholat
 from utils import get_cookies_dict, slugify
+from pg_db import fetch_pg_query
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -62,3 +63,49 @@ def get_jadwal_sholat(province: str, kabkota: str, bulan: str, tahun: str):
     logger.info("Saved jadwal sholat to %s", file_path)
 
     return jadwal_data
+
+@router.get("/api/v1/jadwal")
+def get_jadwal_from_db(kabkota: str, date: str | None = None, start_date: str | None = None, end_date: str | None = None):
+    """Fetch schedule from PostgreSQL database for a specific city.
+    Can filter by exact 'date' or range ('start_date' and 'end_date'). Dates must be in YYYY-MM-DD format.
+    """
+    kab_slug = slugify(kabkota)
+    
+    query = """
+        SELECT 
+            j.prayer_date,
+            j.prayer_time,
+            p.name AS prayer_name,
+            k.name AS kabupaten_kota_name,
+            pr.name AS provinsi_name
+        FROM jadwal j
+        JOIN prayer p ON j.prayer_id = p.id
+        JOIN kabupaten_kota k ON j.kabupaten_kota_slug = k.slug
+        JOIN provinsi pr ON k.provinsi_slug = pr.slug
+        WHERE j.kabupaten_kota_slug = %s
+    """
+    params = [kab_slug]
+
+    if date:
+        query += " AND j.prayer_date = %s"
+        params.append(date)
+    elif start_date and end_date:
+        query += " AND j.prayer_date >= %s AND j.prayer_date <= %s"
+        params.extend([start_date, end_date])
+        
+    query += " ORDER BY j.prayer_date ASC, p.id ASC"
+
+    try:
+        results = fetch_pg_query(query, tuple(params))
+        if not results:
+            return {"message": "No data found for the given criteria", "data": []}
+        
+        # Serialize datetime and date objects to strings
+        for row in results:
+            row["prayer_date"] = row["prayer_date"].isoformat()
+            row["prayer_time"] = row["prayer_time"].isoformat()
+            
+        return {"status": 1, "message": "Success", "data": results}
+    except Exception as exc:
+        logger.exception("Error querying PostgreSQL database")
+        raise HTTPException(status_code=500, detail=f"Database query failed: {exc!s}")

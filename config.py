@@ -8,6 +8,11 @@ import os
 DATA_DIR = "data"
 DB_PATH = os.path.join(DATA_DIR, "salat.db")
 
+# PostgreSQL Database URL
+PG_DATABASE_URL = os.environ.get(
+    "DATABASE_URL", "postgresql://salat_user:salat_password@localhost:5432/salat_db"
+)
+
 # ---------------------------------------------------------------------------
 # External URLs
 # ---------------------------------------------------------------------------
